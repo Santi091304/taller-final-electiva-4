@@ -1,0 +1,6 @@
+{
+  "name": "PINTUKO PRO - Especialistas en Pinturas y Servicios",
+  "description": "Plataforma oficial de Pintuko Pro: catálogo de pinturas industriales y residenciales, servicios certificados, calculadora de metros cuadrados y diagnóstico con Inteligencia Artificial.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
