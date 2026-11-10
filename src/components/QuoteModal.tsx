@@ -13,6 +13,7 @@ import {
   ArrowRight
 } from 'lucide-react';
 import { QuoteData } from '../types';
+import { saveQuoteToSupabase } from '../lib/supabase';
 
 interface QuoteModalProps {
   isOpen: boolean;
@@ -59,6 +60,18 @@ export const QuoteModal: React.FC<QuoteModalProps> = ({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setSubmitted(true);
+    // Persist to Supabase database
+    saveQuoteToSupabase({
+      client_name: formData.name,
+      client_email: formData.email,
+      client_phone: formData.phone,
+      city: formData.city,
+      service_type: `${formData.projectType} - ${formData.surfaceType}`,
+      total_area_m2: formData.areaM2,
+      estimated_gallons: Math.ceil(formData.areaM2 / 20),
+      total_estimate_cop: totalEstimate,
+      notes: formData.notes,
+    }).catch(err => console.log('Supabase sync notice:', err));
   };
 
   return (

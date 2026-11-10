@@ -16,7 +16,8 @@ import {
   Maximize2,
   Minimize2,
   Trash2,
-  Mic
+  Mic,
+  ArrowRight
 } from 'lucide-react';
 import { PRODUCTS } from '../data/mockData';
 
@@ -31,7 +32,48 @@ interface Message {
     price: number;
     size: string;
   };
+  hasCalculatorAction?: boolean;
 }
+
+interface QuickOption {
+  id: string;
+  label: string;
+  prompt: string;
+  badge?: string;
+}
+
+const QUICK_OPTIONS: QuickOption[] = [
+  {
+    id: 'color',
+    label: '🎨 ¿Cómo elijo el mejor color?',
+    prompt: '¿Cómo elijo el mejor color para mi espacio?',
+    badge: 'Colorimetría'
+  },
+  {
+    id: 'exterior',
+    label: '🏡 ¿Qué pintura sirve para exteriores?',
+    prompt: '¿Qué pintura sirve para exteriores y fachadas?',
+    badge: 'Fachadas'
+  },
+  {
+    id: 'calc',
+    label: '🧮 Ayuda con la Calculadora de m²',
+    prompt: 'Ayuda con la Calculadora de m²',
+    badge: 'Herramienta'
+  },
+  {
+    id: 'humidity',
+    label: '💧 ¿Cómo quitar humedad y salitre?',
+    prompt: '¿Cómo quitar la humedad y el salitre de una pared?',
+    badge: 'Patología'
+  },
+  {
+    id: 'epoxy',
+    label: '🏢 Epóxico para pisos de alto tráfico',
+    prompt: '¿Qué pintura epóxica necesito para piso de alto tráfico?',
+    badge: 'Industrial'
+  }
+];
 
 interface PintukoAiChatProps {
   onOpenCalculator: () => void;
@@ -49,7 +91,7 @@ export const PintukoAiChat: React.FC<PintukoAiChatProps> = ({
     {
       id: 'welcome-1',
       sender: 'ai',
-      text: '¡Hola! 👋 Soy Sofi, tu asesora técnica de Pintuko PRO 💕\n\nPuedo ayudarte con mucho gusto a:\n• Diagnosticar problemas en tus paredes (humedad, salitre, grietas).\n• Recomendarte combinaciones y paletas de color preciosas para tu sala o fachada.\n• Calcular los galones necesarios según tus metros cuadrados.\n\n📷 ¡Adjunta una foto de tu pared o espacio para realizar un diagnóstico técnico instantáneo!',
+      text: 'Hola. Soy el asistente virtual de Pintuko PRO.\n\nPuedo ayudarte con gusto a:\n• Diagnosticar problemas en tus paredes (humedad, salitre, grietas).\n• Recomendarte combinaciones y paletas de color ideales para tu sala o fachada.\n• Calcular los galones necesarios según tus metros cuadrados.\n\nPuedes adjuntar una foto de tu pared o espacio para realizar un diagnóstico técnico instantáneo.',
       timestamp: 'Ahora',
     }
   ]);
@@ -92,6 +134,23 @@ export const PintukoAiChat: React.FC<PintukoAiChatProps> = ({
     };
   }, []);
 
+  // Función para sanitizar texto antes de pasarlo a la síntesis de voz (elimina emojis, markdown y símbolos)
+  const cleanTextForSpeech = (rawText: string): string => {
+    return rawText
+      // 1. Eliminar Emojis y símbolos gráficos obligatorios
+      .replace(/([\u2700-\u27BF]|[\uE000-\uF8FF]|\uD83C[\uDC00-\uDFFF]|\uD83D[\uDC00-\uDFFF]|[\u2011-\u26FF]|\uD83E[\uDD10-\uDDFF])/g, '')
+      .replace(/\p{Extended_Pictographic}/gu, '')
+      // 2. Eliminar formato Markdown (*, #, `, _, ~, etc.) y viñetas
+      .replace(/[*#`_~]/g, '')
+      .replace(/[•–—]/g, '')
+      // 3. Eliminar URLs
+      .replace(/https?:\/\/\S+/g, '')
+      // 4. Normalizar pausas y espaciado
+      .replace(/\n+/g, '. ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  };
+
   // Función de Síntesis de Voz: Selección femenina en español y ajustes de naturalidad
   const speakText = (text: string) => {
     if (!('speechSynthesis' in window) || !voiceEnabled) return;
@@ -99,24 +158,21 @@ export const PintukoAiChat: React.FC<PintukoAiChatProps> = ({
     // Detener cualquier locución previa
     window.speechSynthesis.cancel();
 
-    // Limpiar caracteres de formato (markdown, viñetas, URLs) para una dicción fluida
-    const cleanText = text
-      .replace(/[*_#`~]/g, '')
-      .replace(/•/g, '')
-      .replace(/https?:\/\/\S+/g, '')
-      .replace(/\n+/g, '. ');
+    // Limpieza estricta de emojis, markdown y símbolos
+    const cleanText = cleanTextForSpeech(text);
+    if (!cleanText) return;
 
     const utterance = new SpeechSynthesisUtterance(cleanText);
 
-    // 2. Ajuste de Tono y Ritmo (Voz Dulce y Amable)
-    utterance.pitch = 1.3; // Tono ligeramente más alto para un matiz juvenil, cálido y dulce
-    utterance.rate = 0.95;  // Ritmo pausado, tranquilo y natural
+    // Ajustes de Tono y Ritmo para máxima naturalidad humana
+    utterance.pitch = 1.15; // Tono suave y natural (entre 1.1 y 1.2), sin efectos metálicos o robóticos
+    utterance.rate = 0.96;  // Ritmo pausado y tranquilo para una dicción clara
 
-    // 1. Selección de Voz Femenina en Español
+    // Selección de Voz Femenina en Español
     const allVoices = availableVoices.length > 0 ? availableVoices : window.speechSynthesis.getVoices();
     const spanishVoices = allVoices.filter(v => v.lang.toLowerCase().startsWith('es'));
 
-    // Nombres prioritarios solicitados de asistente femenino en español
+    // Nombres prioritarios de voces de asistente femenino en español
     const priorityFemaleNames = [
       'monica', 
       'mónica', 
@@ -185,13 +241,17 @@ export const PintukoAiChat: React.FC<PintukoAiChatProps> = ({
   };
 
   // Generate intelligent response
-  const generateAiResponse = (userQuery: string, hasPhoto: boolean): { text: string; recommendedProduct?: any } => {
+  const generateAiResponse = (userQuery: string, hasPhoto: boolean): { 
+    text: string; 
+    recommendedProduct?: { name: string; price: number; size: string }; 
+    hasCalculatorAction?: boolean;
+  } => {
     const query = userQuery.toLowerCase();
 
     if (hasPhoto) {
       if (query.includes('humed') || query.includes('salitre') || query.includes('mancha') || query.includes('hongo')) {
         return {
-          text: '🔍 He analizado la fotografía: Detecto signos de humedad por capilaridad y eflorescencia salina activa en el revoque.\n\n🛠️ Protocolo Recomendado:\n1. Raspar la superficie hasta llegar al mortero firme.\n2. Tratar con solución neutralizadora de salitre y dejar secar 48h.\n3. Aplicar Imprimante Bloqueador Pintuko y rematar con Viniltex Avanzada Antibacterial.',
+          text: 'He analizado la fotografía: Detecto signos de humedad por capilaridad y eflorescencia salina activa en el revoque.\n\nProtocolo Técnico Recomendado:\n1. Raspar la superficie hasta llegar al mortero firme.\n2. Tratar con solución neutralizadora de salitre y dejar secar 48 horas.\n3. Aplicar Sellador Antihumedad Pintuko y rematar con Viniltex Avanzada Antibacterial.',
           recommendedProduct: {
             name: 'Viniltex Avanzada Antibacterial',
             price: 89900,
@@ -201,7 +261,7 @@ export const PintukoAiChat: React.FC<PintukoAiChatProps> = ({
       }
       if (query.includes('grieta') || query.includes('fisura')) {
         return {
-          text: '🔍 Análisis de la imagen completado: Se observan microfisuras vivas ocasionadas por dilatación térmica exterior.\n\n🛠️ Solución Técnica:\nSellar con masilla elastomérica Pintuko y recubrir con 2 manos de Koraza 5 Años, que tiene una elongación superior al 400% y sella fisuras de hasta 0.8 mm.',
+          text: 'Análisis de la imagen completado: Se observan microfisuras vivas ocasionadas por dilatación térmica exterior.\n\nSolución Técnica:\nSellar con masilla elastomérica Pintuko y recubrir con dos manos de Koraza 5 Años, que tiene una elongación superior al 400% y sella fisuras de hasta 0.8 milímetros.',
           recommendedProduct: {
             name: 'Koraza 5 Años Fachadas',
             price: 116900,
@@ -210,7 +270,7 @@ export const PintukoAiChat: React.FC<PintukoAiChatProps> = ({
         };
       }
       return {
-        text: '📸 ¡Excelente fotografía recibida! He analizado la iluminación y la textura de tu espacio.\n\n🎨 Paleta de Armonía Sugerida:\n• Tono Principal: Blanco Nieve Puro (base luminosa y limpia).\n• Tono de Contraste: Azul Noche Profundo o Gris Ágata Nórdico.\n\nTe recomiendo usar Viniltex Avanzada Antibacterial con acabado mate, ideal para no reflejar imperfecciones.',
+        text: 'Excelente fotografía recibida. He analizado la iluminación y la textura de tu espacio.\n\nPaleta de Armonía Sugerida:\n• Tono Principal: Blanco Nieve Puro (base luminosa y limpia).\n• Tono de Contraste: Azul Noche Profundo o Gris Ágata Nórdico.\n\nTe recomiendo usar Viniltex Avanzada Antibacterial con acabado mate, ideal para disimular imperfecciones.',
         recommendedProduct: {
           name: 'Viniltex Avanzada Antibacterial',
           price: 89900,
@@ -219,12 +279,44 @@ export const PintukoAiChat: React.FC<PintukoAiChatProps> = ({
       };
     }
 
+    // Specific match for "¿Cómo elijo el mejor color?"
+    if (query.includes('elijo el mejor color') || query.includes('elegir el mejor color') || (query.includes('color') && query.includes('espacio'))) {
+      return {
+        text: 'Para elegir el mejor color te recomiendo aplicar la regla profesional de colorimetría 60-30-10:\n\n• 60% Color Dominante: Tonos neutros luminosos como Blanco Nieve o Arena Colonial en las paredes principales.\n• 30% Color Secundario: Un tono medio como Gris Nórdico para muebles y cortinas.\n• 10% Color de Acento: Un color con carácter como Azul Noche Profundo o Terracota en una pared focal.\n\nPuedes probar estos colores en tiempo real en nuestro catálogo interactivo con el bote de pintura virtual.',
+        recommendedProduct: {
+          name: 'Viniltex Avanzada Antibacterial',
+          price: 89900,
+          size: '1 Galón'
+        }
+      };
+    }
+
+    // Specific match for "¿Qué pintura sirve para exteriores?"
+    if (query.includes('sirve para exteriores') || query.includes('pintura para exteriores') || query.includes('fachada') || query.includes('intemperie')) {
+      return {
+        text: 'Para exteriores y fachadas expuestas al sol, lluvia y polución, la formulación adecuada es Koraza 5 Años Fachadas.\n\nSus principales ventajas técnicas son:\n• 100% Acrílica elastomérica con tecnología antihongos y antialgas.\n• Protección hidrófuga que repele el agua de lluvia.\n• Filtro solar UV de alta duración que evita la decoloración prematura.\n• Capacidad de puentear microfisuras de hasta 0.8 milímetros.',
+        recommendedProduct: {
+          name: 'Koraza 5 Años Fachadas',
+          price: 116900,
+          size: '1 Galón'
+        }
+      };
+    }
+
+    // Specific match for "Ayuda con la Calculadora de m²"
+    if (query.includes('calculadora') || query.includes('calculador') || (query.includes('cuanto') && query.includes('metro'))) {
+      return {
+        text: 'Con gusto te ayudo a calcular la pintura exacta para tu proyecto.\n\nRegla de rendimiento oficial Pintuko PRO:\n• 1 Galón de Viniltex rinde entre 40 y 45 metros cuadrados a una mano, o 20 a 22 metros cuadrados a dos manos.\n• 1 Cuñete (5 galones) cubre aproximadamente 100 a 110 metros cuadrados a dos manos.\n\nPuedes abrir nuestra Calculadora Interactiva de metros cuadrados para calcular tus medidas exactas descontando puertas y ventanas.',
+        hasCalculatorAction: true
+      };
+    }
+
     if (query.includes('humed') || query.includes('salitre') || query.includes('gota') || query.includes('filtrac')) {
       return {
-        text: 'Para problemas de humedad y salitre, el error más común es pintar directamente encima. Primero debes limpiar las sales con cepillo de alambre, aplicar Sellador Anti-humedad Pintuko Pro y luego pintar con Viniltex Avanzada Antibacterial en interiores o TechoShield en terrazas.',
+        text: 'Para problemas de humedad y salitre, el error más común es pintar directamente encima. Primero debes cepillar las sales minerales con cepillo de alambre, neutralizar el sustrato, aplicar Sellador Antihumedad Pintuko PRO y rematar con Viniltex Avanzada Antibacterial en interiores o TechoShield en terrazas.',
         recommendedProduct: {
-          name: 'TechoShield Fibrado 10 Años',
-          price: 139900,
+          name: 'Viniltex Avanzada Antibacterial',
+          price: 89900,
           size: '1 Galón'
         }
       };
@@ -232,7 +324,7 @@ export const PintukoAiChat: React.FC<PintukoAiChatProps> = ({
 
     if (query.includes('piso') || query.includes('epox') || query.includes('taller') || query.includes('garaje') || query.includes('bodega')) {
       return {
-        text: 'Para pisos de talleres, parqueaderos o bodegas, necesitas nuestro recubrimiento Pintuko Epóxico 100% Sólidos. Resiste tráfico pesado de montacargas, derrames de gasolina, aceites y solventes con acabado autonivelante espejo.',
+        text: 'Para pisos de talleres, parqueaderos o bodegas, requieres nuestro recubrimiento Pintuko Epóxico 100% Sólidos. Resiste tráfico continuo de vehículos, montacargas, derrames de aceites, gasolina y productos químicos con un acabado autonivelante de alto brillo.',
         recommendedProduct: {
           name: 'Pintuko Epóxico Pisos 100% Sólidos',
           price: 189900,
@@ -243,7 +335,7 @@ export const PintukoAiChat: React.FC<PintukoAiChatProps> = ({
 
     if (query.includes('color') || query.includes('sala') || query.includes('habitac') || query.includes('cuarto')) {
       return {
-        text: 'Para salas y áreas sociales modernas, la tendencia actual combina tonos neutros cálidos como Arena Colonial o Gris Ágata Nórdico, con una pared de acento en Azul Noche Profundo o Verde Eucalipto. En nuestro catálogo interactivo arriba puedes probar cada color en vivo sobre el bote de pintura.',
+        text: 'Para salas y áreas sociales modernas, la tendencia actual combina tonos neutros cálidos como Arena Colonial o Gris Ágata Nórdico, con una pared de acento en Azul Noche Profundo o Verde Eucalipto. En nuestro catálogo interactivo puedes probar cada color en vivo sobre el bote de pintura.',
         recommendedProduct: {
           name: 'Viniltex Avanzada Antibacterial',
           price: 89900,
@@ -254,7 +346,7 @@ export const PintukoAiChat: React.FC<PintukoAiChatProps> = ({
 
     if (query.includes('metal') || query.includes('reja') || query.includes('puerta') || query.includes('óxido')) {
       return {
-        text: 'Para rejas, portones o tuberías metálicas expuestas a la intemperie, la mejor opción es Pintulux Esmalte 3 en 1: actúa como anticorrosivo, base y acabado brillante de secado rápido sin requerir imprimante previo.',
+        text: 'Para rejas, portones o estructuras metálicas expuestas a la intemperie, la mejor solución es Pintulux Esmalte 3 en 1: actúa como anticorrosivo, base y acabado brillante de secado rápido sin requerir imprimante previo.',
         recommendedProduct: {
           name: 'Pintulux Esmalte 3 en 1',
           price: 69900,
@@ -263,22 +355,16 @@ export const PintukoAiChat: React.FC<PintukoAiChatProps> = ({
       };
     }
 
-    if (query.includes('calcul') || query.includes('cuanto') || query.includes('metro') || query.includes('galon') || query.includes('m2')) {
-      return {
-        text: 'Como regla técnica general de Pintuko Pro: 1 Galón rinde entre 35 y 45 m² a una mano (o 20 a 25 m² a dos manos con merma). Si vas a pintar 80 m², necesitarás aproximadamente 4 galones o 1 Cuñete de 5 Galones para asegurar dos manos completas.',
-      };
-    }
-
     return {
-      text: '¡Entendido! En Pintuko PRO contamos con fórmulas certificadas directas de fábrica para Vinilos Lavables, Fachadas, Esmaltes Metálicos y Epóxicos Industriales. ¿Deseas que te recomiende un producto para un área específica o prefieres cotizar con pintores certificados?',
+      text: 'Entendido. En Pintuko PRO formulamos soluciones certificadas para interiores lavables, fachadas con filtro solar, esmaltes anticorrosivos y epóxicos de alto desempeño. Puedes seleccionar cualquiera de nuestras opciones interactivas o escribir tu consulta.',
     };
   };
 
-  const handleSendMessage = (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    if (!inputText.trim() && !attachedImage) return;
+  const handleSendMessage = (textToSend?: string) => {
+    const effectiveText = (textToSend !== undefined ? textToSend : inputText).trim();
+    if (!effectiveText && !attachedImage) return;
 
-    const userText = inputText.trim() || 'He adjuntado una fotografía para diagnóstico técnico.';
+    const userText = effectiveText || 'He adjuntado una fotografía para diagnóstico técnico.';
     const imgToSend = attachedImage;
 
     const newUserMsg: Message = {
@@ -303,23 +389,21 @@ export const PintukoAiChat: React.FC<PintukoAiChatProps> = ({
         text: aiReply.text,
         timestamp: 'Ahora',
         recommendedProduct: aiReply.recommendedProduct,
+        hasCalculatorAction: aiReply.hasCalculatorAction,
       };
 
       setIsTyping(false);
       setMessages(prev => [...prev, newAiMsg]);
 
-      // Trigger automatic speech
+      // Trigger natural voice readout
       if (voiceEnabled) {
         speakText(aiReply.text);
       }
-    }, 1100);
+    }, 700);
   };
 
-  const handleQuickQuestion = (question: string) => {
-    setInputText(question);
-    setTimeout(() => {
-      handleSendMessage();
-    }, 100);
+  const handleSelectQuickOption = (option: QuickOption) => {
+    handleSendMessage(option.prompt);
   };
 
   return (
@@ -376,7 +460,7 @@ export const PintukoAiChat: React.FC<PintukoAiChatProps> = ({
               </div>
               <div>
                 <div className="flex items-center gap-2">
-                  <h3 className="text-sm font-bold text-white">Sofi · Asistente Pintuko IA</h3>
+                  <h3 className="text-sm font-bold text-white">Asistente Virtual Pintuko IA</h3>
                   <span className="text-[9px] uppercase font-bold tracking-widest px-1.5 py-0.2 rounded bg-amber-400 text-slate-950">
                     PRO
                   </span>
@@ -384,7 +468,7 @@ export const PintukoAiChat: React.FC<PintukoAiChatProps> = ({
                 <div className="flex items-center gap-1.5 text-[11px] text-slate-400">
                   <span className="text-emerald-400 font-semibold">En línea</span>
                   <span>·</span>
-                  <span>Voz dulce activa 💕</span>
+                  <span>Voz técnica activa</span>
                 </div>
               </div>
             </div>
@@ -443,13 +527,13 @@ export const PintukoAiChat: React.FC<PintukoAiChatProps> = ({
 
           {/* Chat Messages List */}
           <div className="flex-1 overflow-y-auto p-4 space-y-4">
-            {messages.map((msg) => (
+            {messages.map((msg, idx) => (
               <div
                 key={msg.id}
                 className={`flex flex-col ${msg.sender === 'user' ? 'items-end' : 'items-start'}`}
               >
                 <div
-                  className={`max-w-[85%] rounded-2xl p-3.5 text-xs leading-relaxed shadow-md ${
+                  className={`max-w-[88%] rounded-2xl p-3.5 text-xs leading-relaxed shadow-md ${
                     msg.sender === 'user'
                       ? 'bg-blue-600 text-white rounded-br-none'
                       : 'bg-slate-900 border border-slate-800 text-slate-200 rounded-bl-none'
@@ -467,6 +551,52 @@ export const PintukoAiChat: React.FC<PintukoAiChatProps> = ({
                   )}
 
                   <div className="whitespace-pre-line">{msg.text}</div>
+
+                  {/* Quick Interactive Suggestion Buttons (Shown inside the initial welcome message) */}
+                  {idx === 0 && msg.sender === 'ai' && (
+                    <div className="mt-3 pt-3 border-t border-slate-800/80 space-y-1.5">
+                      <div className="text-[11px] font-semibold text-amber-400 flex items-center gap-1.5 mb-2">
+                        <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                        <span>Opciones rápidas con un solo clic:</span>
+                      </div>
+                      <div className="grid grid-cols-1 gap-1.5">
+                        {QUICK_OPTIONS.map((opt) => (
+                          <button
+                            key={opt.id}
+                            type="button"
+                            onClick={() => handleSelectQuickOption(opt)}
+                            className="w-full text-left p-2.5 rounded-xl bg-slate-950/80 hover:bg-blue-950/70 border border-slate-800 hover:border-amber-400/50 transition-all group flex items-center justify-between cursor-pointer"
+                          >
+                            <span className="text-xs font-medium text-slate-200 group-hover:text-amber-300 transition-colors">
+                              {opt.label}
+                            </span>
+                            {opt.badge && (
+                              <span className="text-[10px] px-2 py-0.5 rounded bg-blue-900/40 text-blue-300 border border-blue-700/40 font-semibold">
+                                {opt.badge}
+                              </span>
+                            )}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Action button: Launch Calculator Modal if suggested */}
+                  {msg.hasCalculatorAction && (
+                    <div className="mt-3 pt-2 border-t border-slate-800/60">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onOpenCalculator();
+                        }}
+                        className="w-full py-2.5 px-3 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-amber-500/20 transition-all cursor-pointer"
+                      >
+                        <Calculator className="w-4 h-4 text-slate-950" />
+                        <span>Abrir Calculadora de m²</span>
+                        <ArrowRight className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  )}
 
                   {/* Recommended Product Quick Card in AI response */}
                   {msg.recommendedProduct && (
@@ -499,6 +629,7 @@ export const PintukoAiChat: React.FC<PintukoAiChatProps> = ({
                   <span className="text-[10px] text-slate-500 font-mono">{msg.timestamp}</span>
                   {msg.sender === 'ai' && (
                     <button
+                      type="button"
                       onClick={() => speakText(msg.text)}
                       className="text-[10px] text-blue-400 hover:text-amber-300 flex items-center gap-1 transition-colors cursor-pointer"
                       title="Escuchar respuesta con voz"
@@ -526,20 +657,16 @@ export const PintukoAiChat: React.FC<PintukoAiChatProps> = ({
             <div ref={messagesEndRef} />
           </div>
 
-          {/* Quick Suggestion Chips */}
-          <div className="px-3 py-2 bg-slate-950/60 border-t border-slate-800/80 flex items-center gap-1.5 overflow-x-auto scrollbar-none">
-            {[
-              '💧 ¿Cómo quitar humedad y salitre?',
-              '🎨 Colores para sala moderna',
-              '🏢 Epóxico para pisos de taller',
-              '📐 ¿Cuántos galones para 80 m²?',
-            ].map((q, idx) => (
+          {/* Quick Suggestion Chips Horizontal Bar */}
+          <div className="px-3 py-2 bg-slate-950/80 border-t border-slate-800/80 flex items-center gap-1.5 overflow-x-auto scrollbar-none">
+            {QUICK_OPTIONS.map((opt) => (
               <button
-                key={idx}
-                onClick={() => handleQuickQuestion(q)}
-                className="px-2.5 py-1 rounded-full text-[11px] text-slate-300 bg-slate-900 hover:bg-slate-800 hover:text-amber-300 border border-slate-800 whitespace-nowrap transition-colors cursor-pointer"
+                key={opt.id}
+                type="button"
+                onClick={() => handleSelectQuickOption(opt)}
+                className="px-2.5 py-1 rounded-full text-[11px] text-slate-300 bg-slate-900 hover:bg-blue-900/40 hover:text-amber-300 hover:border-amber-400/40 border border-slate-800 whitespace-nowrap transition-colors cursor-pointer shrink-0 flex items-center gap-1"
               >
-                {q}
+                <span>{opt.label}</span>
               </button>
             ))}
           </div>
@@ -569,7 +696,10 @@ export const PintukoAiChat: React.FC<PintukoAiChatProps> = ({
 
           {/* Input & Upload Bar */}
           <form
-            onSubmit={handleSendMessage}
+            onSubmit={(e) => {
+              e.preventDefault();
+              handleSendMessage();
+            }}
             className="p-3 bg-[#0c1429] border-t border-slate-800 flex items-center gap-2"
           >
             {/* File upload button for photo */}

@@ -25,22 +25,9 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
 
-  // Application State
-  const [cartItems, setCartItems] = useState<CartItem[]>(() => {
-    // Initial sample item for instant discovery
-    return [
-      {
-        id: 'initial-item-1',
-        product: PRODUCTS[0],
-        selectedSize: 'Galón (3.785 L)',
-        sizePrice: PRODUCTS[0].price,
-        selectedColor: PRODUCTS[0].colors[0],
-        quantity: 2,
-      }
-    ];
-  });
-
-  const [favoriteIds, setFavoriteIds] = useState<string[]>(['vin-01', 'epo-01']);
+  // Application State (Inicialmente vacíos según elección del usuario)
+  const [cartItems, setCartItems] = useState<CartItem[]>([]);
+  const [favoriteIds, setFavoriteIds] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [activeCategory, setActiveCategory] = useState<string>('todos');
 
