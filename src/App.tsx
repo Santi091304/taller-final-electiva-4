@@ -15,6 +15,7 @@ import { FavoritesDrawer } from './components/FavoritesDrawer';
 import { ProductDetailModal } from './components/ProductDetailModal';
 import { PintukoAiChat } from './components/PintukoAiChat';
 import { AuthModal, AuthUser } from './components/AuthModal';
+import { CheckoutModal } from './components/CheckoutModal';
 
 import { PRODUCTS, POPULAR_SEARCHES } from './data/mockData';
 import { PaintProduct, CartItem } from './types';
@@ -33,6 +34,7 @@ export default function App() {
 
   // Modals & Drawers visibility
   const [isCartOpen, setIsCartOpen] = useState(false);
+  const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
   const [isFavoritesOpen, setIsFavoritesOpen] = useState(false);
   const [isQuoteModalOpen, setIsQuoteModalOpen] = useState(false);
   const [isOrdersModalOpen, setIsOrdersModalOpen] = useState(false);
@@ -243,6 +245,22 @@ export default function App() {
         onUpdateQuantity={handleUpdateQuantity}
         onRemoveItem={handleRemoveCartItem}
         onClearCart={handleClearCart}
+        onProceedToCheckout={() => setIsCheckoutOpen(true)}
+      />
+
+      <CheckoutModal
+        isOpen={isCheckoutOpen}
+        onClose={() => setIsCheckoutOpen(false)}
+        onBackToCart={() => {
+          setIsCheckoutOpen(false);
+          setIsCartOpen(true);
+        }}
+        items={cartItems}
+        currentUser={currentUser}
+        onOrderComplete={(orderNumber) => {
+          handleClearCart();
+          showToast(`✓ Orden ${orderNumber} confirmada exitosamente`);
+        }}
       />
 
       <FavoritesDrawer

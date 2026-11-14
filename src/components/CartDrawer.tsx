@@ -19,6 +19,7 @@ interface CartDrawerProps {
   onUpdateQuantity: (itemId: string, newQty: number) => void;
   onRemoveItem: (itemId: string) => void;
   onClearCart: () => void;
+  onProceedToCheckout?: () => void;
 }
 
 export const CartDrawer: React.FC<CartDrawerProps> = ({
@@ -28,6 +29,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
   onUpdateQuantity,
   onRemoveItem,
   onClearCart,
+  onProceedToCheckout,
 }) => {
   const [selectedCity, setSelectedCity] = useState('Bogotá D.C.');
   const [orderCompleted, setOrderCompleted] = useState(false);
@@ -42,6 +44,11 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
   const progressPercent = Math.min(100, (subtotal / freeShippingThreshold) * 100);
 
   const handleCheckout = () => {
+    if (onProceedToCheckout) {
+      onClose();
+      onProceedToCheckout();
+      return;
+    }
     const code = `PK-${Math.floor(1000 + Math.random() * 9000)}`;
     setOrderCode(code);
     setOrderCompleted(true);
@@ -244,7 +251,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                   onClick={handleCheckout}
                   className="w-full py-3.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-black text-sm shadow-lg shadow-amber-400/20 transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-95"
                 >
-                  <span>Confirmar Pedido Express</span>
+                  <span>Finalizar Compra / Checkout</span>
                   <ArrowRight className="w-4 h-4" />
                 </button>
 
