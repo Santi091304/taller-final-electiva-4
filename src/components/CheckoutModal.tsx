@@ -125,7 +125,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
     }
   }, [isOpen, currentUser]);
 
-  if (!isOpen) return null;
+  if (!isOpen || !currentUser) return null;
 
   // Financial calculations
   const subtotal = items.reduce((acc, item) => acc + item.sizePrice * item.quantity, 0);
@@ -288,6 +288,15 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
     });
 
     setIsSubmitting(false);
+
+    if (result.error) {
+      setStep3Error(
+        result.error.message ||
+          'No se pudo registrar el pedido en Supabase. Verifica tu sesión e intenta nuevamente.'
+      );
+      return;
+    }
+
     setCompletedSteps((prev) => Array.from(new Set([...prev, 3])));
     setConfirmedOrder({
       orderNumber,

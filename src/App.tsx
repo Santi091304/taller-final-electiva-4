@@ -14,17 +14,22 @@ import { CartDrawer } from './components/CartDrawer';
 import { FavoritesDrawer } from './components/FavoritesDrawer';
 import { ProductDetailModal } from './components/ProductDetailModal';
 import { PintukoAiChat } from './components/PintukoAiChat';
-import { AuthModal, AuthUser } from './components/AuthModal';
+import { AuthModal, AuthUser, extractAuthUser } from './components/AuthModal';
 import { CheckoutModal } from './components/CheckoutModal';
+import { Session } from '@supabase/supabase-js';
+import { supabase } from './lib/supabase';
 
 import { PRODUCTS, POPULAR_SEARCHES } from './data/mockData';
 import { PaintProduct, CartItem } from './types';
-import { Check, CheckCircle2 } from 'lucide-react';
+import { CheckCircle2 } from 'lucide-react';
 
 export default function App() {
-  // Authentication State
+  // Authentication State (derived strictly from authentic Supabase session)
+  const [authSession, setAuthSession] = useState<Session | null>(null);
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [authNotice, setAuthNotice] = useState<string | null>(null);
+  const [pendingProtectedScreen, setPendingProtectedScreen] = useState<'checkout' | 'orders' | null>(null);
 
   // Application State (Inicialmente vacíos según elección del usuario)
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
@@ -55,6 +60,72 @@ export default function App() {
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 3000);
+  };
+
+  // Sync authentic Supabase Auth session on mount and across auth events
+  useEffect(() => {
+    let isMounted = true;
+
+    const applySession = (session: Session | null) => {
+      if (!isMounted) return;
+      if (session && session.user && session.user.email_confirmed_at) {
+        setAuthSession(session);
+        setCurrentUser(extractAuthUser(session));
+      } else {
+        setAuthSession(null);
+        setCurrentUser(null);
+        setIsCheckoutOpen(false);
+        setIsOrdersModalOpen(false);
+      }
+    };
+
+    supabase.auth
+      .getSession()
+      .then(({ data }) => {
+        applySession(data.session);
+      })
+      .catch(() => {
+        applySession(null);
+      });
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      applySession(session);
+    });
+
+    return () => {
+      isMounted = false;
+      subscription.unsubscribe();
+    };
+  }, []);
+
+  const handleLogout = async () => {
+    const { error } = await supabase.auth.signOut();
+    if (error) {
+      showToast('Error al cerrar sesión. Intenta nuevamente.');
+      return;
+    }
+    setAuthSession(null);
+    setCurrentUser(null);
+    setIsCheckoutOpen(false);
+    setIsOrdersModalOpen(false);
+    setPendingProtectedScreen(null);
+    showToast('Has cerrado sesión correctamente');
+  };
+
+  const openProtectedScreen = (screen: 'checkout' | 'orders', reason: string) => {
+    if (!authSession || !currentUser) {
+      setPendingProtectedScreen(screen);
+      setAuthNotice(reason);
+      setIsAuthModalOpen(true);
+      return;
+    }
+    if (screen === 'checkout') {
+      setIsCheckoutOpen(true);
+    } else if (screen === 'orders') {
+      setIsOrdersModalOpen(true);
+    }
   };
 
   // Cart operations
@@ -150,15 +221,21 @@ export default function App() {
         onOpenCart={() => setIsCartOpen(true)}
         onOpenFavorites={() => setIsFavoritesOpen(true)}
         onOpenQuote={() => setIsQuoteModalOpen(true)}
-        onOpenOrders={() => setIsOrdersModalOpen(true)}
+        onOpenOrders={() =>
+          openProtectedScreen(
+            'orders',
+            'Debes iniciar sesión con tu correo verificado para consultar el historial y rastreo de tus pedidos.'
+          )
+        }
         onOpenCalculator={() => setIsCalculatorModalOpen(true)}
         onOpenAiModal={() => setIsAiModalOpen(true)}
-        onOpenAuth={() => setIsAuthModalOpen(true)}
-        currentUser={currentUser}
-        onLogout={() => {
-          setCurrentUser(null);
-          showToast('Has cerrado sesión correctamente');
+        onOpenAuth={() => {
+          setAuthNotice(null);
+          setPendingProtectedScreen(null);
+          setIsAuthModalOpen(true);
         }}
+        currentUser={currentUser}
+        onLogout={handleLogout}
         onSearch={(term) => setSearchQuery(term)}
         searchQuery={searchQuery}
       />
@@ -204,7 +281,12 @@ export default function App() {
         onOpenCalculator={() => setIsCalculatorModalOpen(true)}
         onOpenAiModal={() => setIsAiModalOpen(true)}
         onOpenQuote={() => setIsQuoteModalOpen(true)}
-        onOpenOrders={() => setIsOrdersModalOpen(true)}
+        onOpenOrders={() =>
+          openProtectedScreen(
+            'orders',
+            'Inicia sesión con tu cuenta verificada para consultar tus pedidos.'
+          )
+        }
       />
 
       {/* Modals & Drawers */}
@@ -234,8 +316,9 @@ export default function App() {
       />
 
       <OrderTrackerModal
-        isOpen={isOrdersModalOpen}
+        isOpen={isOrdersModalOpen && Boolean(authSession && currentUser)}
         onClose={() => setIsOrdersModalOpen(false)}
+        currentUser={currentUser}
       />
 
       <CartDrawer
@@ -245,11 +328,16 @@ export default function App() {
         onUpdateQuantity={handleUpdateQuantity}
         onRemoveItem={handleRemoveCartItem}
         onClearCart={handleClearCart}
-        onProceedToCheckout={() => setIsCheckoutOpen(true)}
+        onProceedToCheckout={() =>
+          openProtectedScreen(
+            'checkout',
+            'Inicia sesión o crea tu cuenta con verificación por correo para continuar al Checkout.'
+          )
+        }
       />
 
       <CheckoutModal
-        isOpen={isCheckoutOpen}
+        isOpen={isCheckoutOpen && Boolean(authSession && currentUser)}
         onClose={() => setIsCheckoutOpen(false)}
         onBackToCart={() => {
           setIsCheckoutOpen(false);
@@ -277,13 +365,27 @@ export default function App() {
         onAddToCart={(prod, size, col) => handleAddToCart(prod, size, col)}
       />
 
-      {/* Authentication Modal (Login, Register & 6-Digit Verification Code) */}
+      {/* Authentication Modal (Supabase Auth: Login, Register & Real 6-Digit Email OTP) */}
       <AuthModal
         isOpen={isAuthModalOpen}
-        onClose={() => setIsAuthModalOpen(false)}
-        onLoginSuccess={(user) => {
+        onClose={() => {
+          setIsAuthModalOpen(false);
+          setAuthNotice(null);
+          setPendingProtectedScreen(null);
+        }}
+        noticeMessage={authNotice}
+        onLoginSuccess={(user, session) => {
+          setAuthSession(session);
           setCurrentUser(user);
+          setAuthNotice(null);
           showToast(`¡Bienvenido a PINTUKO PRO, ${user.name}!`);
+
+          if (pendingProtectedScreen === 'checkout') {
+            setIsCheckoutOpen(true);
+          } else if (pendingProtectedScreen === 'orders') {
+            setIsOrdersModalOpen(true);
+          }
+          setPendingProtectedScreen(null);
         }}
       />
 

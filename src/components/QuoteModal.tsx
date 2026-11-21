@@ -10,7 +10,9 @@ import {
   MapPin, 
   ShieldCheck, 
   Sparkles,
-  ArrowRight
+  ArrowRight,
+  AlertCircle,
+  RefreshCw
 } from 'lucide-react';
 import { QuoteData } from '../types';
 import { saveQuoteToSupabase } from '../lib/supabase';
@@ -44,6 +46,8 @@ export const QuoteModal: React.FC<QuoteModalProps> = ({
   });
 
   const [submitted, setSubmitted] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   if (!isOpen) return null;
 
@@ -57,11 +61,12 @@ export const QuoteModal: React.FC<QuoteModalProps> = ({
   const estimatedLabor = Math.round(formData.areaM2 * laborRate);
   const totalEstimate = estimatedMaterial + estimatedLabor;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setSubmitted(true);
-    // Persist to Supabase database
-    saveQuoteToSupabase({
+    setSubmitError(null);
+    setIsSubmitting(true);
+
+    const { error } = await saveQuoteToSupabase({
       client_name: formData.name,
       client_email: formData.email,
       client_phone: formData.phone,
@@ -71,7 +76,16 @@ export const QuoteModal: React.FC<QuoteModalProps> = ({
       estimated_gallons: Math.ceil(formData.areaM2 / 20),
       total_estimate_cop: totalEstimate,
       notes: formData.notes,
-    }).catch(err => console.log('Supabase sync notice:', err));
+    });
+
+    setIsSubmitting(false);
+
+    if (error) {
+      setSubmitError(error.message || 'No se pudo enviar la cotización a Supabase.');
+      return;
+    }
+
+    setSubmitted(true);
   };
 
   return (
@@ -270,6 +284,13 @@ export const QuoteModal: React.FC<QuoteModalProps> = ({
                 </div>
               </div>
 
+              {submitError && (
+                <div className="p-3 rounded-xl bg-rose-950/80 border border-rose-500/40 text-rose-200 text-xs flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                  <span>{submitError}</span>
+                </div>
+              )}
+
               {/* Dynamic Cost Projection */}
               <div className="p-4 rounded-xl bg-gradient-to-r from-blue-950/70 via-slate-900 to-blue-950/70 border border-blue-500/40 flex items-center justify-between">
                 <div>
@@ -284,10 +305,20 @@ export const QuoteModal: React.FC<QuoteModalProps> = ({
                 </div>
                 <button
                   type="submit"
-                  className="px-5 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs shadow-lg shadow-blue-600/30 transition-all flex items-center gap-1.5 cursor-pointer"
+                  disabled={isSubmitting}
+                  className="px-5 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-60 text-white font-bold text-xs shadow-lg shadow-blue-600/30 transition-all flex items-center gap-1.5 cursor-pointer"
                 >
-                  <Send className="w-3.5 h-3.5" />
-                  <span>Enviar Cotización</span>
+                  {isSubmitting ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      <span>Enviando...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Send className="w-3.5 h-3.5" />
+                      <span>Enviar Cotización</span>
+                    </>
+                  )}
                 </button>
               </div>
 

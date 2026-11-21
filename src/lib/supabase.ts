@@ -1,25 +1,34 @@
 import { createClient } from '@supabase/supabase-js';
 
-// Configuration parameters
+// Public publishable key for browser client (safe under Supabase RLS; never store secret/SMTP keys in frontend)
 const DEFAULT_PUBLISHABLE_KEY = 'sb_publishable_06AtvMldHs9-ReuGPx9-SA_cOGkp3rL';
 
-// Retrieve configuration from Vite environment variables or localStorage override
 export const getSupabaseConfig = () => {
-  const envUrl = (import.meta as any).env?.VITE_SUPABASE_URL || '';
-  const envKey = (import.meta as any).env?.VITE_SUPABASE_PUBLISHABLE_KEY || '';
-  
-  // Also check stored project ref or URL if user sets it dynamically in the session
-  const storedUrl = typeof window !== 'undefined' ? localStorage.getItem('pintuko_supabase_url') : null;
-  const storedKey = typeof window !== 'undefined' ? localStorage.getItem('pintuko_supabase_key') : null;
+  const envUrl = ((import.meta as any).env?.VITE_SUPABASE_URL || '').trim();
+  const envKey = (
+    (import.meta as any).env?.VITE_SUPABASE_PUBLISHABLE_KEY ||
+    (import.meta as any).env?.VITE_SUPABASE_ANON_KEY ||
+    ''
+  ).trim();
 
-  const supabaseUrl = storedUrl || envUrl || 'https://your-project-ref.supabase.co';
-  const supabaseKey = storedKey || envKey || DEFAULT_PUBLISHABLE_KEY;
+  const isPlaceholderUrl =
+    !envUrl ||
+    envUrl.includes('your-project-ref') ||
+    envUrl.includes('TU_PROJECT_REF') ||
+    envUrl.includes('placeholder');
+
+  const supabaseKey = envKey || DEFAULT_PUBLISHABLE_KEY;
 
   const isConfigured = Boolean(
-    supabaseUrl && 
-    !supabaseUrl.includes('your-project-ref') && 
-    supabaseUrl.startsWith('https://')
+    !isPlaceholderUrl &&
+      envUrl.startsWith('https://') &&
+      supabaseKey &&
+      !supabaseKey.startsWith('sb_secret_')
   );
+
+  // Use a safe non-routing fallback URL only to prevent createClient from throwing during initial module load
+  // when VITE_SUPABASE_URL has not been set yet; all auth/DB helpers block calls when isConfigured is false.
+  const supabaseUrl = isConfigured ? envUrl : 'https://unconfigured-project.supabase.co';
 
   return {
     supabaseUrl,
@@ -30,7 +39,7 @@ export const getSupabaseConfig = () => {
 
 const initialConfig = getSupabaseConfig();
 
-// Create Supabase Client instance
+// Create Supabase Client instance with persistent auth session handling
 export const supabase = createClient(initialConfig.supabaseUrl, initialConfig.supabaseKey, {
   auth: {
     persistSession: true,
@@ -39,12 +48,59 @@ export const supabase = createClient(initialConfig.supabaseUrl, initialConfig.su
   },
 });
 
-export const updateSupabaseUrl = (newUrl: string) => {
-  if (typeof window !== 'undefined') {
-    localStorage.setItem('pintuko_supabase_url', newUrl);
-    window.location.reload();
+/**
+ * Translate Supabase Auth / Network errors into clear, actionable Spanish messages.
+ */
+export function translateSupabaseAuthError(err: unknown): string {
+  const rawMessage =
+    typeof err === 'string'
+      ? err
+      : (err as { message?: string })?.message || 'Error desconocido de autenticación.';
+  const msg = rawMessage.toLowerCase();
+
+  if (msg.includes('invalid login credentials')) {
+    return 'Correo electrónico o contraseña incorrectos.';
   }
-};
+  if (msg.includes('email not confirmed')) {
+    return 'Tu correo electrónico aún no ha sido confirmado. Ingresa el código de 6 dígitos o solicita un reenvío.';
+  }
+  if (msg.includes('user already registered') || msg.includes('already been registered')) {
+    return 'Este correo electrónico ya está registrado. Intenta iniciar sesión.';
+  }
+  if (msg.includes('password should be at least')) {
+    return 'La contraseña debe tener al menos 6 caracteres.';
+  }
+  if (msg.includes('token has expired') || msg.includes('otp_expired')) {
+    return 'El código de verificación ha expirado o ya fue utilizado. Solicita un nuevo código.';
+  }
+  if (msg.includes('invalid token') || msg.includes('otp_disabled') || msg.includes('invalid otp')) {
+    return 'El código de 6 dígitos es incorrecto. Verifica tu correo electrónico e inténtalo nuevamente.';
+  }
+  if (
+    msg.includes('rate limit') ||
+    msg.includes('over_email_send_rate_limit') ||
+    msg.includes('too many requests') ||
+    msg.includes('security purposes')
+  ) {
+    return 'Se alcanzó el límite temporal de envíos de correo. Por favor espera unos minutos antes de reintentar.';
+  }
+  if (
+    msg.includes('error sending confirmation email') ||
+    msg.includes('error sending') ||
+    msg.includes('smtp') ||
+    msg.includes('sender')
+  ) {
+    return 'No se pudo enviar el correo de verificación desde el servidor SMTP (remitente rechazado o error SMTP). Verifica la configuración de Brevo y Supabase.';
+  }
+  if (msg.includes('unable to validate email address') || msg.includes('invalid email')) {
+    return 'El formato del correo electrónico no es válido.';
+  }
+  if (msg.includes('failed to fetch') || msg.includes('networkerror') || msg.includes('network')) {
+    return 'No fue posible conectar con Supabase. Verifica tu conexión a internet y la variable VITE_SUPABASE_URL.';
+  }
+
+  return rawMessage;
+}
 
 // Database helper functions for PINTUKO PRO
 export interface QuoteRecord {
@@ -61,6 +117,7 @@ export interface QuoteRecord {
 }
 
 export interface OrderRecord {
+  id?: string;
   order_number: string;
   client_name: string;
   client_email: string;
@@ -70,6 +127,18 @@ export interface OrderRecord {
   items_summary: string;
   total_amount_cop: number;
   created_at?: string;
+  user_id?: string;
+  payment_method?: string;
+  delivery_method?: string;
+  items_json?: Array<{
+    product_id: string;
+    product_name: string;
+    selected_size: string;
+    selected_color_name: string;
+    selected_color_hex: string;
+    quantity: number;
+    unit_price_cop: number;
+  }>;
 }
 
 export interface CheckoutOrderPayload {
@@ -112,33 +181,46 @@ export interface CheckoutOrderPayload {
 export async function saveQuoteToSupabase(quote: QuoteRecord) {
   const config = getSupabaseConfig();
   if (!config.isConfigured) {
-    console.warn('[Supabase] VITE_SUPABASE_URL not fully configured yet. Saved in local fallback state.');
-    return { data: null, error: new Error('SUPABASE_URL_NOT_CONFIGURED') };
+    return {
+      data: null,
+      error: new Error('VITE_SUPABASE_URL no está configurada. No se pudo guardar la cotización en Supabase.'),
+    };
   }
 
   try {
-    const { data, error } = await supabase
-      .from('quotes')
-      .insert([
-        {
-          client_name: quote.client_name,
-          client_email: quote.client_email,
-          client_phone: quote.client_phone,
-          city: quote.city,
-          service_type: quote.service_type,
-          total_area_m2: quote.total_area_m2 || 0,
-          estimated_gallons: quote.estimated_gallons || 0,
-          total_estimate_cop: quote.total_estimate_cop,
-          notes: quote.notes || '',
-          created_at: new Date().toISOString(),
-        }
-      ])
-      .select();
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+
+    const record: Record<string, unknown> = {
+      client_name: quote.client_name,
+      client_email: quote.client_email,
+      client_phone: quote.client_phone,
+      city: quote.city,
+      service_type: quote.service_type,
+      total_area_m2: quote.total_area_m2 || 0,
+      estimated_gallons: quote.estimated_gallons || 0,
+      total_estimate_cop: quote.total_estimate_cop,
+      notes: quote.notes || '',
+      created_at: new Date().toISOString(),
+    };
+
+    if (session?.user?.id) {
+      record.user_id = session.user.id;
+    }
+
+    const { data, error } = await supabase.from('quotes').insert([record]).select();
+
+    if (error && session?.user?.id && error.message?.toLowerCase().includes('user_id')) {
+      delete record.user_id;
+      const retry = await supabase.from('quotes').insert([record]).select();
+      return { data: retry.data, error: retry.error };
+    }
 
     return { data, error };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error('[Supabase saveQuote error]:', err);
-    return { data: null, error: err };
+    return { data: null, error: err instanceof Error ? err : new Error('Error de conexión con Supabase') };
   }
 }
 
@@ -148,89 +230,126 @@ export async function saveQuoteToSupabase(quote: QuoteRecord) {
 export async function saveOrderToSupabase(order: OrderRecord) {
   const config = getSupabaseConfig();
   if (!config.isConfigured) {
-    return { data: null, error: new Error('SUPABASE_URL_NOT_CONFIGURED') };
+    return {
+      data: null,
+      error: new Error('VITE_SUPABASE_URL no está configurada. No se pudo registrar la orden.'),
+    };
   }
 
   try {
-    const { data, error } = await supabase
-      .from('orders')
-      .insert([
-        {
-          order_number: order.order_number,
-          client_name: order.client_name,
-          client_email: order.client_email,
-          shipping_address: order.shipping_address,
-          city: order.city,
-          status: order.status,
-          items_summary: order.items_summary,
-          total_amount_cop: order.total_amount_cop,
-          created_at: new Date().toISOString(),
-        }
-      ])
-      .select();
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+
+    if (!session?.user) {
+      return {
+        data: null,
+        error: new Error('Debes tener una sesión autenticada para registrar un pedido.'),
+      };
+    }
+
+    const baseRecord: Record<string, unknown> = {
+      order_number: order.order_number,
+      client_name: order.client_name,
+      client_email: order.client_email,
+      shipping_address: order.shipping_address,
+      city: order.city,
+      status: order.status,
+      items_summary: order.items_summary,
+      total_amount_cop: order.total_amount_cop,
+      user_id: session.user.id,
+      created_at: new Date().toISOString(),
+    };
+
+    const { data, error } = await supabase.from('orders').insert([baseRecord]).select();
+
+    if (error && error.message?.toLowerCase().includes('user_id')) {
+      delete baseRecord.user_id;
+      const retry = await supabase.from('orders').insert([baseRecord]).select();
+      return { data: retry.data, error: retry.error };
+    }
 
     return { data, error };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error('[Supabase saveOrder error]:', err);
-    return { data: null, error: err };
+    return { data: null, error: err instanceof Error ? err : new Error('Error al guardar pedido') };
   }
 }
 
 /**
- * Persist complete Checkout order (Identification, Shipping, Payment, Items & Coupon)
- * Supports extended Supabase schema with graceful fallback to base columns.
+ * Persist complete Checkout order (Identification, Shipping, Payment, Items & Coupon).
+ * Requires an authenticated Supabase session to respect RLS policies.
  */
 export async function saveCheckoutOrderToSupabase(payload: CheckoutOrderPayload) {
   const config = getSupabaseConfig();
   const fullName = `${payload.client_first_name} ${payload.client_last_name}`.trim();
   const itemsSummary = payload.items
-    .map(it => `${it.quantity}x ${it.product_name} (${it.selected_size}, ${it.selected_color_name})`)
+    .map((it) => `${it.quantity}x ${it.product_name} (${it.selected_size}, ${it.selected_color_name})`)
     .join(' | ');
 
   if (!config.isConfigured) {
-    console.info('[Supabase] Modo local activo. Orden registrada:', payload.order_number);
-    return { data: { ...payload, id: payload.order_number }, error: null, synced: false };
+    return {
+      data: null,
+      error: new Error('VITE_SUPABASE_URL no está configurada. No se pudo conectar con Supabase para guardar tu pedido.'),
+      synced: false,
+    };
   }
 
   try {
-    // Try inserting with extended schema columns (identification, delivery, coupon, payment, items)
-    const { data, error } = await supabase
-      .from('orders')
-      .insert([
-        {
-          order_number: payload.order_number,
-          client_name: fullName,
-          client_email: payload.client_email,
-          client_phone: payload.client_phone,
-          document_type: payload.document_type,
-          document_number: payload.document_number,
-          shipping_address: payload.address_details
-            ? `${payload.shipping_address} (${payload.address_details})`
-            : payload.shipping_address,
-          city: payload.city,
-          delivery_method: payload.delivery_method,
-          payment_method: payload.payment_method,
-          coupon_code: payload.coupon_code || null,
-          subtotal_cop: payload.subtotal_cop,
-          shipping_cop: payload.shipping_cop,
-          discount_cop: payload.discount_cop,
-          total_amount_cop: payload.total_amount_cop,
-          items_summary: itemsSummary,
-          items_json: payload.items,
-          accepted_terms: payload.accepted_terms,
-          subscribed_newsletter: payload.subscribed_newsletter,
-          status: 'preparando',
-          created_at: new Date().toISOString(),
-        }
-      ])
-      .select();
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+
+    if (!session?.user) {
+      return {
+        data: null,
+        error: new Error('Sesión no autenticada. Inicia sesión con tu correo verificado para confirmar tu compra.'),
+        synced: false,
+      };
+    }
+
+    const extendedRecord: Record<string, unknown> = {
+      order_number: payload.order_number,
+      user_id: session.user.id,
+      client_name: fullName,
+      client_email: session.user.email || payload.client_email,
+      client_phone: payload.client_phone,
+      document_type: payload.document_type,
+      document_number: payload.document_number,
+      shipping_address: payload.address_details
+        ? `${payload.shipping_address} (${payload.address_details})`
+        : payload.shipping_address,
+      city: payload.city,
+      delivery_method: payload.delivery_method,
+      payment_method: payload.payment_method,
+      coupon_code: payload.coupon_code || null,
+      subtotal_cop: payload.subtotal_cop,
+      shipping_cop: payload.shipping_cop,
+      discount_cop: payload.discount_cop,
+      total_amount_cop: payload.total_amount_cop,
+      items_summary: itemsSummary,
+      items_json: payload.items,
+      accepted_terms: payload.accepted_terms,
+      subscribed_newsletter: payload.subscribed_newsletter,
+      status: 'preparando',
+      created_at: new Date().toISOString(),
+    };
+
+    const { data, error } = await supabase.from('orders').insert([extendedRecord]).select();
 
     if (error) {
-      // Fallback to base schema if extended columns aren't created yet
+      // Only fall back to base columns if the failure is due to schema column mismatch, NOT RLS/auth failures
+      const errMsg = error.message?.toLowerCase() || '';
+      const isSchemaColumnError = errMsg.includes('column') && errMsg.includes('does not exist');
+
+      if (!isSchemaColumnError) {
+        return { data: null, error, synced: false };
+      }
+
       const fallbackResult = await saveOrderToSupabase({
         order_number: payload.order_number,
         client_name: fullName,
-        client_email: payload.client_email,
+        client_email: session.user.email || payload.client_email,
         shipping_address: `${payload.shipping_address}${payload.address_details ? ` - ${payload.address_details}` : ''} | Tel: ${payload.client_phone} | Doc: ${payload.document_type} ${payload.document_number}`,
         city: payload.city,
         status: 'preparando',
@@ -238,33 +357,37 @@ export async function saveCheckoutOrderToSupabase(payload: CheckoutOrderPayload)
         total_amount_cop: payload.total_amount_cop,
       });
 
-      return { data: fallbackResult.data, error: fallbackResult.error, synced: !fallbackResult.error };
+      return {
+        data: fallbackResult.data,
+        error: fallbackResult.error,
+        synced: !fallbackResult.error,
+      };
     }
 
-    // Also attempt inserting line items into 'order_items' if table exists
     if (data && data[0]?.id) {
-      supabase
-        .from('order_items')
-        .insert(
-          payload.items.map(item => ({
-            order_id: data[0].id,
-            order_number: payload.order_number,
-            product_id: item.product_id,
-            product_name: item.product_name,
-            size_label: item.selected_size,
-            color_name: item.selected_color_name,
-            color_hex: item.selected_color_hex,
-            quantity: item.quantity,
-            unit_price_cop: item.unit_price_cop,
-          }))
-        )
-        .then(() => {});
+      await supabase.from('order_items').insert(
+        payload.items.map((item) => ({
+          order_id: data[0].id,
+          order_number: payload.order_number,
+          product_id: item.product_id,
+          product_name: item.product_name,
+          size_label: item.selected_size,
+          color_name: item.selected_color_name,
+          color_hex: item.selected_color_hex,
+          quantity: item.quantity,
+          unit_price_cop: item.unit_price_cop,
+        }))
+      );
     }
 
     return { data, error: null, synced: true };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error('[Supabase saveCheckoutOrder error]:', err);
-    return { data: null, error: err, synced: false };
+    return {
+      data: null,
+      error: err instanceof Error ? err : new Error('Error de conexión con Supabase'),
+      synced: false,
+    };
   }
 }
 
@@ -304,7 +427,6 @@ export async function validateCouponInSupabase(code: string): Promise<{
     }
   }
 
-  // Built-in promotional coupons for immediate testing
   if (normalized === 'PINTUKO10') {
     return { valid: true, code: normalized, discountType: 'percentage', value: 10, label: '10% de descuento en pinturas' };
   }
@@ -322,25 +444,49 @@ export async function validateCouponInSupabase(code: string): Promise<{
 }
 
 /**
- * Fetch orders for a user email
+ * Fetch orders belonging to the authenticated user session.
  */
-export async function fetchUserOrdersFromSupabase(email: string) {
+export async function fetchUserOrdersFromSupabase(): Promise<{
+  data: OrderRecord[];
+  error: Error | null;
+}> {
   const config = getSupabaseConfig();
   if (!config.isConfigured) {
-    return { data: [], error: null };
+    return {
+      data: [],
+      error: new Error('VITE_SUPABASE_URL no está configurada.'),
+    };
   }
 
   try {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+
+    if (!session?.user) {
+      return {
+        data: [],
+        error: new Error('Sesión no autenticada.'),
+      };
+    }
+
+    const userEmail = session.user.email || '';
     const { data, error } = await supabase
       .from('orders')
       .select('*')
-      .eq('client_email', email)
+      .eq('client_email', userEmail)
       .order('created_at', { ascending: false });
 
-    return { data: data || [], error };
-  } catch (err) {
+    if (error) {
+      return { data: [], error: new Error(error.message) };
+    }
+
+    return { data: (data as OrderRecord[]) || [], error: null };
+  } catch (err: unknown) {
     console.error('[Supabase fetchOrders error]:', err);
-    return { data: [], error: err };
+    return {
+      data: [],
+      error: err instanceof Error ? err : new Error('Error al consultar tus pedidos'),
+    };
   }
 }
-

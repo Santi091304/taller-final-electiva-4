@@ -1,48 +1,89 @@
-import React, { useState } from 'react';
-import { 
-  X, 
-  Clock, 
-  Search, 
-  Truck, 
-  Package, 
-  CheckCircle2, 
-  MapPin, 
-  ArrowRight,
-  ShieldCheck
+import React, { useState, useEffect } from 'react';
+import {
+  X,
+  Clock,
+  Truck,
+  CheckCircle2,
+  ShieldCheck,
+  RefreshCw,
+  AlertCircle,
+  Package,
 } from 'lucide-react';
-import { RECENT_ORDERS } from '../data/mockData';
-import { OrderStatus } from '../types';
+import { AuthUser } from './AuthModal';
+import { fetchUserOrdersFromSupabase, OrderRecord } from '../lib/supabase';
 
 interface OrderTrackerModalProps {
   isOpen: boolean;
   onClose: () => void;
+  currentUser: AuthUser | null;
 }
 
 export const OrderTrackerModal: React.FC<OrderTrackerModalProps> = ({
   isOpen,
   onClose,
+  currentUser,
 }) => {
-  const [selectedOrderId, setSelectedOrderId] = useState<string>(RECENT_ORDERS[0].orderId);
-  const [searchTracking, setSearchTracking] = useState<string>('');
+  const [orders, setOrders] = useState<OrderRecord[]>([]);
+  const [selectedOrderNumber, setSelectedOrderNumber] = useState<string>('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
 
-  if (!isOpen) return null;
+  const loadOrders = async () => {
+    if (!currentUser) return;
+    setIsLoading(true);
+    setFetchError(null);
 
-  const currentOrder = RECENT_ORDERS.find(o => 
-    o.orderId.toLowerCase() === selectedOrderId.toLowerCase() ||
-    (searchTracking && o.orderId.toLowerCase().includes(searchTracking.toLowerCase()))
-  ) || RECENT_ORDERS[0];
+    const { data, error } = await fetchUserOrdersFromSupabase();
+    setIsLoading(false);
 
-  const getStepActiveIndex = (status: OrderStatus['status']) => {
-    switch (status) {
-      case 'Preparando': return 0;
-      case 'En Tránsito': return 1;
-      case 'En Reparto': return 2;
-      case 'Entregado': return 3;
-      default: return 1;
+    if (error) {
+      setFetchError(error.message);
+      setOrders([]);
+      return;
+    }
+
+    setOrders(data);
+    if (data.length > 0 && !data.some((o) => o.order_number === selectedOrderNumber)) {
+      setSelectedOrderNumber(data[0].order_number);
     }
   };
 
-  const currentStepIdx = getStepActiveIndex(currentOrder.status);
+  useEffect(() => {
+    if (isOpen && currentUser) {
+      loadOrders();
+    }
+  }, [isOpen, currentUser?.email]);
+
+  if (!isOpen || !currentUser) return null;
+
+  const currentOrder =
+    orders.find((o) => o.order_number === selectedOrderNumber) || orders[0] || null;
+
+  const getStepActiveIndex = (status: OrderRecord['status']) => {
+    switch (status) {
+      case 'preparando':
+        return 0;
+      case 'en_camino':
+        return 1;
+      case 'entregado':
+        return 3;
+      default:
+        return 0;
+    }
+  };
+
+  const formatStatusLabel = (status: OrderRecord['status']) => {
+    switch (status) {
+      case 'preparando':
+        return 'Preparando';
+      case 'en_camino':
+        return 'En Camino';
+      case 'entregado':
+        return 'Entregado';
+      default:
+        return status;
+    }
+  };
 
   const steps = [
     { title: 'Preparado en Fábrica', desc: 'Control de calidad y embalaje' },
@@ -51,10 +92,11 @@ export const OrderTrackerModal: React.FC<OrderTrackerModalProps> = ({
     { title: 'Entregado en Obra', desc: 'Firma y recibido a conformidad' },
   ];
 
+  const currentStepIdx = currentOrder ? getStepActiveIndex(currentOrder.status) : 0;
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md overflow-y-auto animate-in fade-in duration-200">
       <div className="relative w-full max-w-2xl bg-[#090f20] border border-blue-500/30 rounded-2xl shadow-2xl overflow-hidden my-8">
-        
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800 bg-[#0d162e]">
           <div className="flex items-center gap-3">
@@ -62,15 +104,15 @@ export const OrderTrackerModal: React.FC<OrderTrackerModalProps> = ({
               <Clock className="w-5 h-5 text-amber-300" />
             </div>
             <div>
-              <h2 className="text-base font-bold text-white">Rastreo de Últimos Pedidos & Despachos</h2>
+              <h2 className="text-base font-bold text-white">Mis Pedidos & Despachos</h2>
               <p className="text-xs text-slate-400">
-                Consulta en vivo el estado logístico de tus compras Pintuko Pro
+                Historial autenticado de <span className="text-slate-200">{currentUser.email}</span>
               </p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors"
+            className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
           >
             <X className="w-5 h-5" />
           </button>
@@ -78,115 +120,150 @@ export const OrderTrackerModal: React.FC<OrderTrackerModalProps> = ({
 
         {/* Content */}
         <div className="p-6 space-y-6">
-          
-          {/* Order Selector Chips */}
-          <div>
-            <div className="text-xs font-semibold text-slate-300 uppercase tracking-wider mb-2">
-              Seleccionar Pedido Reciente:
+          {isLoading ? (
+            <div className="py-12 flex flex-col items-center justify-center gap-3 text-slate-400 text-xs">
+              <RefreshCw className="w-6 h-6 text-amber-400 animate-spin" />
+              <span>Consultando tus pedidos en Supabase...</span>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-              {RECENT_ORDERS.map((ord) => (
+          ) : fetchError ? (
+            <div className="p-4 rounded-xl bg-rose-950/70 border border-rose-500/40 text-rose-200 text-xs flex items-start gap-2.5">
+              <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+              <div className="space-y-2">
+                <p>{fetchError}</p>
                 <button
-                  key={ord.orderId}
-                  onClick={() => setSelectedOrderId(ord.orderId)}
-                  className={`p-3 rounded-xl border text-left transition-all ${
-                    currentOrder.orderId === ord.orderId
-                      ? 'bg-blue-950/80 border-blue-500 text-white shadow-md'
-                      : 'bg-slate-900 border-slate-800 text-slate-300 hover:bg-slate-800/80'
-                  }`}
+                  onClick={loadOrders}
+                  className="text-amber-300 font-bold hover:underline cursor-pointer"
                 >
-                  <div className="flex items-center justify-between font-mono font-bold text-xs text-amber-300">
-                    <span>{ord.orderId}</span>
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 font-sans">
-                      {ord.status}
-                    </span>
-                  </div>
-                  <div className="text-[11px] text-slate-300 mt-1 truncate">{ord.customerName}</div>
-                  <div className="text-[10px] text-slate-500">{ord.city}</div>
+                  Reintentar consulta
                 </button>
-              ))}
+              </div>
             </div>
-          </div>
-
-          {/* Active Order Details Card */}
-          <div className="p-5 rounded-2xl bg-slate-900/90 border border-slate-800 space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-slate-800">
+          ) : !currentOrder ? (
+            <div className="py-12 text-center space-y-3">
+              <div className="w-14 h-14 rounded-full bg-slate-900 border border-slate-800 flex items-center justify-center mx-auto text-slate-500">
+                <Package className="w-7 h-7 text-amber-400" />
+              </div>
+              <h3 className="text-sm font-bold text-white">Aún no tienes pedidos registrados</h3>
+              <p className="text-xs text-slate-400 max-w-sm mx-auto leading-relaxed">
+                Cuando completes una compra en el Checkout, aparecerá aquí con su guía y estado de despacho en tiempo real.
+              </p>
+            </div>
+          ) : (
+            <>
+              {/* Order Selector Chips */}
               <div>
-                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                  Guía de Despacho Nacional
-                </span>
-                <div className="text-base font-black font-mono text-white">
-                  {currentOrder.trackingNumber}
+                <div className="text-xs font-semibold text-slate-300 uppercase tracking-wider mb-2">
+                  Tus Pedidos Recientes:
                 </div>
-              </div>
-              <div className="text-left sm:text-right">
-                <span className="text-[10px] text-slate-400 uppercase">Transportadora:</span>
-                <div className="text-xs font-bold text-blue-300">{currentOrder.carrier}</div>
-              </div>
-            </div>
-
-            {/* Stepper Timeline */}
-            <div className="py-2">
-              <div className="relative flex items-center justify-between">
-                <div className="absolute left-0 right-0 top-1/2 -translate-y-1/2 h-1 bg-slate-800 z-0" />
-                <div 
-                  className="absolute left-0 top-1/2 -translate-y-1/2 h-1 bg-amber-400 transition-all duration-500 z-0" 
-                  style={{ width: `${(currentStepIdx / (steps.length - 1)) * 100}%` }}
-                />
-
-                {steps.map((st, i) => {
-                  const isPast = i <= currentStepIdx;
-                  return (
-                    <div key={i} className="relative z-10 flex flex-col items-center">
-                      <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs transition-colors ${
-                        isPast ? 'bg-amber-400 text-slate-950 shadow-md shadow-amber-400/30' : 'bg-slate-800 text-slate-500 border border-slate-700'
-                      }`}>
-                        {isPast ? <CheckCircle2 className="w-4 h-4" /> : i + 1}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  {orders.slice(0, 6).map((ord) => (
+                    <button
+                      key={ord.order_number}
+                      onClick={() => setSelectedOrderNumber(ord.order_number)}
+                      className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
+                        currentOrder.order_number === ord.order_number
+                          ? 'bg-blue-950/80 border-blue-500 text-white shadow-md'
+                          : 'bg-slate-900 border-slate-800 text-slate-300 hover:bg-slate-800/80'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between font-mono font-bold text-xs text-amber-300">
+                        <span>{ord.order_number}</span>
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 font-sans">
+                          {formatStatusLabel(ord.status)}
+                        </span>
                       </div>
-                      <span className={`text-[11px] font-semibold mt-1.5 hidden sm:block text-center ${
-                        isPast ? 'text-slate-200' : 'text-slate-500'
-                      }`}>
-                        {st.title}
-                      </span>
+                      <div className="text-[11px] text-slate-300 mt-1 truncate">{ord.client_name}</div>
+                      <div className="text-[10px] text-slate-500">{ord.city}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Active Order Details Card */}
+              <div className="p-5 rounded-2xl bg-slate-900/90 border border-slate-800 space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-slate-800">
+                  <div>
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                      Número de Orden
+                    </span>
+                    <div className="text-base font-black font-mono text-white">
+                      {currentOrder.order_number}
                     </div>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Delivery Estimation Box */}
-            <div className="p-3.5 rounded-xl bg-blue-950/40 border border-blue-900/50 flex items-center justify-between">
-              <div className="flex items-center gap-2.5">
-                <Truck className="w-5 h-5 text-amber-400" />
-                <div>
-                  <div className="text-xs font-bold text-white">Estimado de Entrega en Obra:</div>
-                  <div className="text-[11px] text-blue-300">{currentOrder.estimatedDelivery}</div>
-                </div>
-              </div>
-              <div className="text-right">
-                <span className="text-[10px] text-slate-400">Total Facturado:</span>
-                <div className="text-xs font-mono font-bold text-emerald-400">
-                  ${currentOrder.total.toLocaleString('es-CO')} COP
-                </div>
-              </div>
-            </div>
-
-            {/* Order Items */}
-            <div>
-              <div className="text-[11px] font-semibold text-slate-400 uppercase mb-1.5">
-                Productos en este Despacho:
-              </div>
-              <div className="space-y-1.5">
-                {currentOrder.items.map((it, idx) => (
-                  <div key={idx} className="flex justify-between text-xs py-1.5 px-3 bg-slate-950/60 rounded-lg border border-slate-800/80">
-                    <span className="text-slate-200">{it.name}</span>
-                    <span className="font-mono text-slate-400">{it.qty}x ({it.size})</span>
                   </div>
-                ))}
-              </div>
-            </div>
+                  <div className="text-left sm:text-right">
+                    <span className="text-[10px] text-slate-400 uppercase">Destino:</span>
+                    <div className="text-xs font-bold text-blue-300">
+                      {currentOrder.city} · {currentOrder.shipping_address}
+                    </div>
+                  </div>
+                </div>
 
-          </div>
+                {/* Stepper Timeline */}
+                <div className="py-2">
+                  <div className="relative flex items-center justify-between">
+                    <div className="absolute left-0 right-0 top-1/2 -translate-y-1/2 h-1 bg-slate-800 z-0" />
+                    <div
+                      className="absolute left-0 top-1/2 -translate-y-1/2 h-1 bg-amber-400 transition-all duration-500 z-0"
+                      style={{ width: `${(currentStepIdx / (steps.length - 1)) * 100}%` }}
+                    />
+
+                    {steps.map((st, i) => {
+                      const isPast = i <= currentStepIdx;
+                      return (
+                        <div key={i} className="relative z-10 flex flex-col items-center">
+                          <div
+                            className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs transition-colors ${
+                              isPast
+                                ? 'bg-amber-400 text-slate-950 shadow-md shadow-amber-400/30'
+                                : 'bg-slate-800 text-slate-500 border border-slate-700'
+                            }`}
+                          >
+                            {isPast ? <CheckCircle2 className="w-4 h-4" /> : i + 1}
+                          </div>
+                          <span
+                            className={`text-[11px] font-semibold mt-1.5 hidden sm:block text-center ${
+                              isPast ? 'text-slate-200' : 'text-slate-500'
+                            }`}
+                          >
+                            {st.title}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Delivery Box */}
+                <div className="p-3.5 rounded-xl bg-blue-950/40 border border-blue-900/50 flex items-center justify-between">
+                  <div className="flex items-center gap-2.5">
+                    <Truck className="w-5 h-5 text-amber-400" />
+                    <div>
+                      <div className="text-xs font-bold text-white">Estado del Pedido:</div>
+                      <div className="text-[11px] text-blue-300">
+                        {formatStatusLabel(currentOrder.status)}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-[10px] text-slate-400">Total Facturado:</span>
+                    <div className="text-xs font-mono font-bold text-emerald-400">
+                      ${Number(currentOrder.total_amount_cop || 0).toLocaleString('es-CO')} COP
+                    </div>
+                  </div>
+                </div>
+
+                {/* Order Items Summary */}
+                <div>
+                  <div className="text-[11px] font-semibold text-slate-400 uppercase mb-1.5">
+                    Detalle de Productos:
+                  </div>
+                  <div className="p-3 bg-slate-950/60 rounded-lg border border-slate-800/80 text-xs text-slate-200 leading-relaxed">
+                    {currentOrder.items_summary}
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
 
           <div className="flex items-center justify-between text-xs text-slate-400 pt-2 border-t border-slate-800">
             <span className="flex items-center gap-1.5">
@@ -195,12 +272,11 @@ export const OrderTrackerModal: React.FC<OrderTrackerModalProps> = ({
             </span>
             <button
               onClick={onClose}
-              className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-semibold text-xs transition-colors"
+              className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-semibold text-xs transition-colors cursor-pointer"
             >
               Cerrar
             </button>
           </div>
-
         </div>
       </div>
     </div>
